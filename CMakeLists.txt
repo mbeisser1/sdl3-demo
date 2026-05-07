@@ -49,8 +49,14 @@ FetchContent_Declare(
     GIT_SHALLOW TRUE
 )
 
+FetchContent_Declare(
+    glm
+	GIT_REPOSITORY https://github.com/g-truc/glm.git
+	GIT_TAG 1.0.3 
+)
+
 # Make all libraries available
-FetchContent_MakeAvailable(SDL3 SDL3_image SDL3_mixer SDL3_ttf)
+FetchContent_MakeAvailable(SDL3 SDL3_image SDL3_mixer SDL3_ttf glm)
 
 # Create executable
 add_executable(sdl3-demo src/main.cpp)
@@ -61,4 +67,5 @@ target_link_libraries(sdl3-demo PRIVATE
     SDL3_image::SDL3_image
     SDL3_mixer::SDL3_mixer
     SDL3_ttf::SDL3_ttf
+    glm::glm
 )
