@@ -1,4 +1,5 @@
 #include <array>
+#include <cmath>
 #include <cstdint>
 #include <iostream>
 #include <vector>
@@ -18,6 +19,18 @@
 
 #include "SDL3/SDL_keyboard.h"
 #include "game_object.h"
+
+namespace {
+
+constexpr int k_player_sprite_px = 24;
+// How far you must move (pixels) to advance one step in the repeating walk pattern.
+constexpr float k_walk_px_per_seq_step = 5.0f;
+
+// One cycle each; pattern repeats while walking. Left foot leads first at game start.
+constexpr std::array<int, 4> k_seq_left_lead{{1, 0, 1, 2}};
+constexpr std::array<int, 4> k_seq_right_lead{{1, 2, 1, 0}};
+
+} // namespace
 
 struct SDLState
 {
@@ -52,9 +65,6 @@ struct GameState
 
 struct Resources
 {
-    const int ANIM_PLAYER_IDLE = 0;
-    std::vector<Animation> playerAnims;
-
     std::vector<SDL_Texture*> textures;
     SDL_Texture* texIdle;
 
@@ -69,9 +79,6 @@ struct Resources
 
     void load(SDLState& state)
     {
-        playerAnims.resize(5);
-        playerAnims[ANIM_PLAYER_IDLE] = Animation(3, 0.8f);
-
         texIdle = loadTexture(state.renderer, "assets/player-warrior-sprite-sheet.png");
     }
 
@@ -112,12 +119,11 @@ int main(int argc, char* argv[])
 
     // Every object in game needs it's own copy of animations appropriate for it's
     // type so it can manage time separately and independently from other objects.
-    // If we didn't do this all enemy types would be executing the same animation
-    // at the same time in the same frame at all times.
-    player.animations = res.playerAnims;
-    player.current_animation = res.ANIM_PLAYER_IDLE;
-    player.acceleration = glm::vec2(1, 0); // 300
-    player.max_speed_x = 300;
+    // Player walk uses explicit column indices in draw/update, not the generic Animation list.
+    player.animations = {};
+    player.current_animation = -1;
+    // Constant run speed (pixels per second) while a direction key is held.
+    player.max_speed_x = 220.0f;
     gs.layers[LAYER_IDX_CHARACTERS].push_back(player);
 
     // setup game data
@@ -239,76 +245,122 @@ void cleanup(SDLState& state)
 
 void drawObject(const SDLState& state, GameState& gs, GameObject& obj, float delta_time)
 {
-    const auto spriteSize = float{24};
+    const float spriteSize = static_cast<float>(k_player_sprite_px);
 
-    // This 
-    float srcX = obj.current_animation != -1
-      ? obj.animations[obj.current_animation].currentFrame() * spriteSize : 0.0f;
+    float srcX = 0.0f;
+    if (obj.type == ObjectType::player)
+    {
+        const auto& player = std::get<PlayerData>(obj.data);
+        int col = 1;
+        if (std::fabs(obj.velocity.x) > 0.01f)
+        {
+            const std::array<int, 4>& seq =
+                player.walk_leads_left ? k_seq_left_lead : k_seq_right_lead;
+            col = seq[static_cast<size_t>(player.walk_seq_index) % seq.size()];
+        }
+        srcX = static_cast<float>(col) * spriteSize;
+    }
+    else if (obj.current_animation != -1)
+    {
+        srcX = obj.animations[obj.current_animation].currentFrame() * spriteSize;
+    }
 
-    // warrior right from sprite sheet
     SDL_FRect src{srcX, 48, spriteSize, spriteSize};
 
     SDL_FRect dest{obj.position.x, obj.position.y, spriteSize, spriteSize};
-    SDL_RenderTexture(state.renderer, obj.texture, &src, &dest);
+
+    SDL_FlipMode flip = SDL_FLIP_NONE;
+    if (obj.type == ObjectType::player)
+    {
+        flip = std::get<PlayerData>(obj.data).face_left ? SDL_FLIP_HORIZONTAL : SDL_FLIP_NONE;
+    }
+    else if (obj.velocity.x < 0.0f)
+    {
+        flip = SDL_FLIP_HORIZONTAL;
+    }
+
+    SDL_RenderTextureRotated(
+        state.renderer, obj.texture, &src, &dest, 0.0, nullptr, flip);
 }
 
 void update(const SDLState& state, GameState& gs, Resources& res, GameObject& obj, float deltaTime)
 {
+    (void)res;
     if(obj.type == ObjectType::player)
     {
-        float current_direction{};
-        
-        if(state.keys[SDL_SCANCODE_S])
-        {
-            current_direction += -1;
-        }
-        if(state.keys[SDL_SCANCODE_F])
-        {
-            current_direction += 1;
-        }
+        float input_x{};
 
-        if(current_direction)
+        if (state.keys[SDL_SCANCODE_LEFT] || state.keys[SDL_SCANCODE_A])
         {
-            obj.direction = current_direction;
+            input_x -= 0.5f;
+        }
+        if (state.keys[SDL_SCANCODE_RIGHT] || state.keys[SDL_SCANCODE_D])
+        {
+            input_x += 0.5f;
         }
 
         auto& player = std::get<PlayerData>(obj.data);
+        const bool walking = (input_x != 0.0f);
+        const bool was_walking = player.was_walking;
 
-        switch(player.state_)
+        if (walking)
         {
-            case PlayerState::idle:
-            {
-                if(current_direction)
-                {   
-                    player.state_ = PlayerState::running;
-                }
-            }
-            case PlayerState::running:
-            {
-                if(!current_direction)
-                {
-                    player.state_ = PlayerState::idle;
-                }
-            }
-            case PlayerState::jumping:
-            {
-
-            }
+            obj.direction = input_x;
+            obj.velocity.x = input_x * obj.max_speed_x;
+            player.face_left = (input_x < 0.0f);
+        }
+        else
+        {
+            obj.velocity.x = 0.0f;
         }
 
-        // We need to get the new position
-        // new position ≈ old position + velocity × deltaTime
-        // That is why both lines end with * deltaTime: 
-        // - first integrate acceleration into velocity, 
-        // - then integrate velocity into position. 
-        // That pattern is a simple Euler step (explicit integration), which is what many beginner game tutorials use.
-        
-        // a = (dv / dt)
-        // dv = a * dt
-        obj.velocity = obj.velocity + (current_direction * obj.acceleration * deltaTime);
+        const glm::vec2 delta_pos = obj.velocity * deltaTime;
+        const float step_dist = std::fabs(delta_pos.x);
 
-        // v = dx / dt
-        // dx = v * dt
-        obj.position = obj.position + (obj.velocity * deltaTime);
+        if (walking && !was_walking)
+        {
+            // Both sequences start with column 1 at index 0 (same as idle). Start at index 1
+            // so the first moving frame is 0 vs 2 by lead; otherwise quick taps never leave
+            // column 1, end_col is always 1, and stutter / foot alternation has no visible effect.
+            player.walk_seq_index = 1;
+            player.walk_frame_accum = 0.0f;
+        }
+
+        if (walking)
+        {
+            player.walk_frame_accum += step_dist;
+            while (player.walk_frame_accum >= k_walk_px_per_seq_step)
+            {
+                player.walk_frame_accum -= k_walk_px_per_seq_step;
+                player.walk_seq_index =
+                    (player.walk_seq_index + 1) % static_cast<int>(k_seq_left_lead.size());
+            }
+        }
+        else if (was_walking)
+        {
+            // Next walk always leads with the *other* foot than the frame we stopped on.
+            const std::array<int, 4>& seq =
+                player.walk_leads_left ? k_seq_left_lead : k_seq_right_lead;
+            const int end_col =
+                seq[static_cast<size_t>(player.walk_seq_index) % seq.size()];
+            if (end_col == 0)
+            {
+                player.walk_leads_left = false;
+            }
+            else if (end_col == 2)
+            {
+                player.walk_leads_left = true;
+            }
+            else
+            {
+                player.walk_leads_left = !player.walk_leads_left;
+            }
+
+            player.walk_frame_accum = 0.0f;
+        }
+
+        player.was_walking = walking;
+
+        obj.position += delta_pos;
     }
 }

@@ -27,7 +27,11 @@ public:
     bool isTimeout() const {return timeout_;}
     float getTime() const {return elapsed_time_;}
     float getLength() const {return step_length_;}
-    void reset() {elapsed_time_ = 0;}
+    void reset()
+    {
+        elapsed_time_ = 0;
+        timeout_ = false;
+    }
 
 private:
         float step_length_{};

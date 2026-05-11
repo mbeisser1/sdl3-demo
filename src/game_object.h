@@ -16,11 +16,14 @@ enum class PlayerState
 
 struct PlayerData
 {
-    PlayerState state_;
-    PlayerData()
-    {
-        state_ = PlayerState::idle;
-    }
+    PlayerState state_{PlayerState::idle};
+
+    // Walk cycle: sheet columns 0=left pose, 1=idle/mid, 2=right pose (art for facing right).
+    bool face_left{false};
+    bool walk_leads_left{true};
+    int walk_seq_index{0};
+    float walk_frame_accum{0};
+    bool was_walking{false};
 };
 
 struct LevelData {};

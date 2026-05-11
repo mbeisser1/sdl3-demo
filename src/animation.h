@@ -25,6 +25,11 @@ class Animation
         timer_.step(delta_time);
     }
 
+    void reset()
+    {
+        timer_.reset();
+    }
+
     private:
     Timer timer_{0};
     int frame_count_{};    
