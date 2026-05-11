@@ -16,16 +16,22 @@
 #include <X11/extensions/Xrandr.h>
 #include <glm/glm.hpp>
 
+#include "SDL3/SDL_keyboard.h"
 #include "game_object.h"
 
 struct SDLState
 {
+    SDLState() : keys(SDL_GetKeyboardState(nullptr)){};
+
     SDL_Window* window{};
     SDL_Renderer* renderer{};
     int width{1600};
     int height{900};
     int logW{640};
     int logH{320};
+
+    // array is valid until end of program
+    const bool *keys;
 };
 
 constexpr size_t LAYER_IDX_LEVEL = 0;
@@ -81,6 +87,7 @@ struct Resources
 bool initialize(SDLState& state);
 void cleanup(SDLState& state);
 void drawObject(const SDLState& state, GameState& gs, GameObject& obj, float delta_time);
+void update(const SDLState& state, GameState& gs, Resources& res, GameObject& obj, float deltaTime);
 
 ///////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -109,11 +116,11 @@ int main(int argc, char* argv[])
     // at the same time in the same frame at all times.
     player.animations = res.playerAnims;
     player.current_animation = res.ANIM_PLAYER_IDLE;
+    player.acceleration = glm::vec2(1, 0); // 300
+    player.max_speed_x = 300;
     gs.layers[LAYER_IDX_CHARACTERS].push_back(player);
 
     // setup game data
-    // array is valid until end of program
-    const bool* keys = SDL_GetKeyboardState(nullptr);
     auto prevTime = SDL_GetTicks();
 
     // start game loop
@@ -150,6 +157,8 @@ int main(int argc, char* argv[])
         {
             for(GameObject& obj : layer)
             {
+                update(state, gs, res, obj, deltaTime);
+
                 if(obj.current_animation != -1)
                 {
                     // MJB: Don't completely understand here
@@ -241,4 +250,65 @@ void drawObject(const SDLState& state, GameState& gs, GameObject& obj, float del
 
     SDL_FRect dest{obj.position.x, obj.position.y, spriteSize, spriteSize};
     SDL_RenderTexture(state.renderer, obj.texture, &src, &dest);
+}
+
+void update(const SDLState& state, GameState& gs, Resources& res, GameObject& obj, float deltaTime)
+{
+    if(obj.type == ObjectType::player)
+    {
+        float current_direction{};
+        
+        if(state.keys[SDL_SCANCODE_S])
+        {
+            current_direction += -1;
+        }
+        if(state.keys[SDL_SCANCODE_F])
+        {
+            current_direction += 1;
+        }
+
+        if(current_direction)
+        {
+            obj.direction = current_direction;
+        }
+
+        auto& player = std::get<PlayerData>(obj.data);
+
+        switch(player.state_)
+        {
+            case PlayerState::idle:
+            {
+                if(current_direction)
+                {   
+                    player.state_ = PlayerState::running;
+                }
+            }
+            case PlayerState::running:
+            {
+                if(!current_direction)
+                {
+                    player.state_ = PlayerState::idle;
+                }
+            }
+            case PlayerState::jumping:
+            {
+
+            }
+        }
+
+        // We need to get the new position
+        // new position ≈ old position + velocity × deltaTime
+        // That is why both lines end with * deltaTime: 
+        // - first integrate acceleration into velocity, 
+        // - then integrate velocity into position. 
+        // That pattern is a simple Euler step (explicit integration), which is what many beginner game tutorials use.
+        
+        // a = (dv / dt)
+        // dv = a * dt
+        obj.velocity = obj.velocity + (current_direction * obj.acceleration * deltaTime);
+
+        // v = dx / dt
+        // dx = v * dt
+        obj.position = obj.position + (obj.velocity * deltaTime);
+    }
 }
